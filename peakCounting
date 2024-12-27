@@ -1,0 +1,212 @@
+setwd('F:/CUTTag')
+
+library(GenomicRanges)
+library('GenomicFeatures')   # 数据统一采用TxDb（即transcriptDb）数据类型，通过一系列地函数对转录组，蛋白编码区域，外显子区域，启动子区域等进行统一的提取
+library(tidyverse)
+# library(DiffChIPL)
+library(Rsubread)
+# library(DiffBind)
+
+dirPeak <- list.files(path = './merLanceFilt', pattern = ".bed", full.names = T)
+sample <- gsub('^.*/', '', dirPeak)
+sample <- gsub('_peak.*$', '', sample)
+names(dirPeak) <- sample
+peak <- list()
+
+# 读入peak
+for (i in sample){
+  peak[[i]] <-  read.table(file = dirPeak[i], header = F)
+  colnames(peak[[i]])[c(1:4,19)] = c("chr", "start", "end", "score", 'pValue_100kb' )
+  peak[[i]]$region <- paste0( peak[[i]]$chr, ":", peak[[i]]$start, '-', peak[[i]]$end)
+  peak[[i]]$width <- peak[[i]]$end - peak[[i]]$start
+}
+
+# 过滤peak
+bed5 <- list()
+dir.create('bedLance')
+for (i in sample){
+  bed5[[i]] <- peak[[i]][, c(1:4,19:21)]
+  bed5[[i]][,4] <- round(bed5[[i]][,4]*1000)
+  bed5[[i]] <- bed5[[i]][bed5[[i]]$width > 200 & bed5[[i]]$pValue_100kb > 3.5 & bed5[[i]]$score > 50,]
+  write.table(bed5[[i]], file = paste0('./bedLance/', i, '_peak.bed'), 
+              quote = F, sep = "\t", row.names = F, col.names =F )
+}
+
+ggplot(aa, aes(x= width, y = pValue_100kb)) + geom_point() + ylim(c(0,5)) + xlim(c(50,1000))
+ggplot(aa, aes(x= width, y = score)) + geom_point() + ylim(c(0,200)) + xlim(c(50,1000))
+
+# counting
+GR <- list()
+for (i in sample) {
+  GR[[i]] <-  makeGRangesFromDataFrame(bed5[[i]][, 1:3])
+}
+
+
+# temporal peak
+temporal$Peaks <- gsub('merLanceFilt', 'merLance', temporal$Peaks)
+
+comPeaks <- list()
+aa <- GR[c(1:4, 6, 9:10, 12, 15:19, 21, 24)]
+for (i in unique(temporal$Factor)) {
+  bb <-  aa[grep(pattern = i, names(aa))]
+  comPeaks[[paste0('E13E18_', i)]] <- GenomicRanges::reduce( x = unlist( GRangesList(bb)) )
+}
+
+dirBam <- list() 
+aa <- temporal$bamReads
+for (i in unique(temporal$Factor)) {
+  dirBam[[paste0('E13E18_', i)]] <- aa[grep(i, aa) ]
+}
+
+  
+Gli3cKO <- meta[c(14:17, 26:29,47:50),]
+for (i in unique(Gli3cKO$Factor)) {
+  bb <- GR[grep(pattern = paste0(i, '.*Gli3'), names(GR))]
+  comPeaks[[paste0('Gli3cKO_', i)]] <- GenomicRanges::reduce( x = unlist( GRangesList(bb)) )
+}
+
+bamFile <- list.files(path = 'E:/CUTTag/filtered', pattern = 'bam$', full.names = T)
+for (i in unique(Gli3cKO$Factor)) {
+  dirBam[[paste0('Gli3cKO_', i)]] <- bamFile[grep(pattern = paste0(i, '.*Gli3'), bamFile)]
+}
+
+
+Lhx2cKO <- meta[c(10:13, 22:25,43:46),]
+for (i in unique(Lhx2cKO$Factor)) {
+  bb <- GR[grep(pattern = paste0(i, '_E15'), names(GR))]
+  comPeaks[[paste0('Lhx2cKO_', i)]] <- GenomicRanges::reduce( x = unlist( GRangesList(bb)) )
+}
+
+for (i in unique(Lhx2cKO$Factor)) {
+  dirBam[[paste0('Lhx2cKO_', i)]] <-  Lhx2cKO$bamReads[grep(i, Lhx2cKO$bamReads)]
+}
+
+countRegion <- list()
+for (i in names(comPeaks)) {
+  comPeaks1 <- as.data.frame(comPeaks[[i]])
+  colnames(comPeaks1) <- c("Chr", "Start", "End", "Width", "Strand")
+  comPeaks1$GeneID <- paste0(comPeaks1$Chr, ":", comPeaks1$Start, "-", comPeaks1$End)
+  comPeaks1 <- comPeaks1[, c(6,1:3,5)]
+  countRegion[[i]] <- comPeaks1
+}
+
+names(countRegion) == names(dirBam)
+
+countL <- list()
+for (i in names(comPeaks)) {
+  countL[[i]] <- featureCounts(files = dirBam[[i]], annot.ext = countRegion[[i]], isGTFAnnotationFile = F,
+                     minMQS = 0, isPairedEnd = T, countReadPairs = T, requireBothEndsMapped = T,
+                     checkFragLength = T, minFragLength = 30, maxFragLength = 10000,
+                     allowMultiOverlap = T, primaryOnly = T, countMultiMappingReads = F, countChimericFragments = F, 
+                     ignoreDup = T, autosort = TRUE, nthreads = 8, verbose = T)
+}
+
+
+# peak annatation
+library('GenomicFeatures')   # 数据统一采用TxDb（即transcriptDb）数据类型，通过一系列地函数对转录组，蛋白编码区域，外显子区域，启动子区域等进行统一的提取
+library(dplyr)
+# mm39M31_TxDb <- TxDb.Mmusculus.UCSC.mm39.refGene
+# 由gtf文件制作TxDb
+mm39M31_TxDb <- makeTxDbFromGFF("Q:/genome/GRCm39M31/IGV/mm39m31_24412.gtf",
+                                format= "gtf", dataSource="gencode", organism="Mus musculus", dbxrefTag="gene_id",
+                                taxonomyId=NA, circ_seqs=NULL, chrominfo=NULL, miRBaseBuild=NA, metadata=NULL)
+saveDb(mm39M31_TxDb, 'mm39m31_24412.sqlite')
+mm39 <- loadDb('Q:/genome/GRCm39M31/mm39m31_24412.sqlite')
+
+library(ChIPseeker)
+options('ChIPseeker.downstreamDistance' = 300000)
+getOption("ChIPseeker.downstreamDistance")
+
+Anno <- list( )
+for (i in names(comPeaks)) {
+  Anno[[i]] <- annotatePeak( comPeaks[[i]],  tssRegion = c(-1000, 1000), TxDb = mm39, level = "transcript",  assignGenomicAnnotation = T,
+                       genomicAnnotationPriority = c("Promoter", "5UTR", "3UTR", "Exon", "Intron", "Downstream", "Intergenic"),  
+                       annoDb = "org.Mm.eg.db", addFlankGeneInfo = F, columns = c("ENTREZID", "ENSEMBL", "SYMBOL"),
+                       flankDistance = 10000, overlap = "TSS", verbose = T) 
+}
+
+color9 <- c("#f4c2c2","#ff9999","#FED9A6", "#E5D8BD", "#CCEBC5", "#8fbc8f", "#B3CDE3", "#d8bfd8" ,"#e7accf" ) 
+color6 <- c( '#E8ADAA', '#FFCBA4', '#E3F9A6', '#8fbc8f', '#B3CDEb', '#d8bfd8')
+for (i in names(Anno)) {
+  levels(Anno[[i]]@annoStat$Feature) <- c("Promoter", "5' UTR", "1st Exon", "Other Exon", "1st Intron", "Other Intron", "3' UTR", "Downstream (<=300kb)","Distal Intergenic")
+  p1 <- Anno[[i]]@annoStat %>% ggplot( aes( x= '',  y = Frequency, fill = Feature  )) +
+  geom_bar( stat = "identity", position = "stack",  width = 0.5 ) + 
+  theme_void() + scale_fill_manual(values = color9 ) +
+  coord_polar(theta = "y", start = 1.5, direction = -1, clip = "on") 
+  p2 <- plotDistToTSS(Anno[[i]], title = paste0( "Distribution of ", i, " binding loci relative to TSS") ) + 
+    theme_void() + scale_fill_manual(values = color6 )  
+  p3 <- plotAnnoBar(Anno[[i]])+ scale_fill_manual(values = color9) 
+  ggsave( paste0('./Mfuzz/', i, "_Anno.pdf"), plot = p1|p2|p3, path = getwd(), 
+          scale = 1.2, width = 40, height = 10, units = "cm", dpi = 300, limitsize = T )
+}
+
+
+# peak intersection
+plotCircleVenn <- function(GRangeListOBJ = GR[1:3], fileName = 'CircleVenn', A = 'E13', B = 'E15', C = 'E18') {
+  
+  library(Vennerable)
+  library(GenomicRanges)
+  library(tidyverse)
+  
+  dir.create('Venn')
+  names(GRangeListOBJ) <- c(A, B, C)
+  comPeak <- GenomicRanges::reduce(unlist( GRangesList(GRangeListOBJ)))
+  
+  agePeak <- list()
+  for (i in names(GRangeListOBJ)) {
+    aa <- findOverlaps(GRangeListOBJ[[i]],comPeak )
+    agePeak[[i]] <- comPeak[aa@to,]
+  }
+  
+  dataX <- list()
+  for ( i in names(agePeak)) {
+    aa <- as.data.frame(agePeak[[i]])
+    dataX[[i]] <- paste0(aa$seqnames, ":", aa$start, "-", aa$end )
+  }
+  
+  Vstem <- Venn(dataX)
+  Vstem3 <- Vstem[, c(names(dataX))]
+  AAA <- compute.Venn(Vstem3)
+  vTheme <- VennThemes(AAA)
+  
+  color8 <- c( "#ff9999",   '#B3CDEb', "#d8bfd8",  "#f4c2c2", "#E5D8BD", "#FED9A6", '#AEE0C5', '#B2D69A' ) 
+  vTheme$Face <- vTheme$Face[c("DarkMatter", "001", "101", "100", "111", "110", "011", "010")]
+  names(color8) <- names(vTheme$Face)
+  for (i in names(vTheme$Face)) { vTheme$Face[[i]]$fill <- color8[i] }  
+  
+  color3 <- c( "#F67280", "#75C177", "#5EACD8")
+  vTheme$Set <-  vTheme$Set[ c("Set1", "Set2", "Set3")]
+  names(color3) <-  names(vTheme$Set) 
+  for (i in names(vTheme$Set)) { vTheme$Set[[i]]$col <- color3[i] }
+  vTheme$SetText <- vTheme$SetText[ c("Set1", "Set2", "Set3")]
+  for (i in names(vTheme$SetText)) { vTheme$SetText[[i]]$col <- color3[i] }
+  
+  Cairo::Cairo(file = paste0('./Venn/', fileName, '_Venn.pdf'), type = 'pdf', pointsize = 12, 
+               bg = "transparent", canvas = 'transparent', 
+               units="in", width= 10, height= 10, dpi='auto')
+  plot(AAA, gp = vTheme)
+  dev.off()
+  
+  comPeakMtx <- as.data.frame(comPeak)
+  comPeakMtx$region <- paste0(comPeakMtx$seqnames, ':', comPeakMtx$start, "-", comPeakMtx$end)
+  VennGroupList <- Vstem@IntersectionSets
+  VennGroupList <- VennGroupList[2:8]
+  names(VennGroupList) <- c( A, B, paste0(A, "&", B ), C, paste0(A, "&", C ), paste0(B, "&", C ), paste0(A, "&", B, '&', C ))
+  
+  for (i in names(VennGroupList)) {
+    VennGroupList[[i]] <- as.data.frame(VennGroupList[[i]])
+    VennGroupList[[i]][['Age']] <- i
+  }
+  
+  VennGroup <- rbind(VennGroupList[[1]], VennGroupList[[2]], VennGroupList[[3]], VennGroupList[[4]], VennGroupList[[5]], VennGroupList[[6]], VennGroupList[[7]])
+  colnames(VennGroup)[1] <- 'region'
+  comPeakMtx <- left_join(comPeakMtx, VennGroup, by = 'region')
+  write.table(comPeakMtx, file = paste0( './Venn/', fileName, "_Venn.bed"), quote = F, sep = "\t", col.names = F, row.names = F)
+  
+}
+
+plotCircleVenn(GRangeListOBJ = GR[c(4,6,9)], fileName = 'H3K27me3', A = 'E13', B = 'E15', C = 'E18' )
+plotCircleVenn(GRangeListOBJ = GR[c(1:3)], fileName = 'Bcl11a', A = 'E13', B = 'E15', C = 'E18' )
+plotCircleVenn(GRangeListOBJ = GR[c(10,12,15 )], fileName = 'H3K4me3', A = 'E13', B = 'E15', C = 'E18' )
+plotCircleVenn(GRangeListOBJ = GR[c(16:18)], fileName = 'Lhx2', A = 'E13', B = 'E15', C = 'E18' )
+plotCircleVenn(GRangeListOBJ = GR[c(19,21,24)], fileName = 'Polr2a', A = 'E13', B = 'E15', C = 'E18' )
