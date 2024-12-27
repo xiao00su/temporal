@@ -1,0 +1,31 @@
+# 由fastq文件提取样品名
+File=(`ls ./fastq/*.R1.fastq.gz`) 
+echo ${File[@]}
+aaa=`echo ${#File[*]}`  # 样品数量
+iii=(`seq 0 1 $((${aaa}-1))`)
+declare -a sample
+for i in ${iii[@]};do sample[i]=`echo "${File[i]%_R1*}"`;done  # 去掉后缀_R1.fastq.gz
+for i in ${iii[@]};do sample[i]=`echo "${sample[i]##*/}"`;done  # 去掉前缀
+echo ${sample[@]}
+
+index="mm39"
+ref="/home/dell/app/genome/subread_mm39/mm39"
+anno="/home/dell/app/genome/IGV/genes.gtf"
+blacklist='/home/dell/app/genome/mm39/blacklist.bed'
+mkdir trim bam bamDup filtered bw peakLance peakFiltered   merBam merBW merLance   peakSicer peak_macs3 peak_hmmr
+
+for i in ${sample[@]};do trim_galore --stringency 1 --phred33 -q 20 --gzip -o ./trim/ ./fastq/${i}_R1.fastq.gz ./fastq/${i}_R2.fastq.gz --length 30 -j 24 --paired;done 
+
+for i in ${sample[@]};do subread-align -i ${ref} -F GTF -a ${anno} -r ./trim/${i}_R1_val_1.fq.gz -R ./trim/${i}_R2_val_2.fq.gz -o ./bam/${i}_${index}.bam --sortReadsByCoordinates -d 30 -D 1000 -M 6 -T 24 -t 1;done
+
+for i in ${sample[@]};do sambamba markdup ./bam/${i}_${index}.bam ./bamDup/${i}_${index}_rmDup.bam -t 24;done
+for i in ${sample[@]};do samtools view -b -h ./bamDup/${i}_${index}_rmDup.bam -o ./filtered/${i}_${index}_filtered.bam -m 30 -q 5 -f 2 -F 1024 --write-index -@ 24;done  
+# for i in ${sample[@]};do samtools index -b ./filtered/${i}_${index}_filtered.bam -@ 48;done
+
+for i in ${sample[@]}; do bamCoverage -b ./filtered/${i}_${index}_filtered.bam -o ./bw/${i}_${index}.bw -e -v --normalizeUsing RPKM --ignoreForNormalization chrM --exactScaling -bs 1 -p 24; done
+
+for i in ${sample[@]}; do lanceotron callPeaks ./bw/${i}_${index}.bw -t 4 -w 400 -c 0.001 -f ./peakLance --format Web;done
+
+for i in ${sample[@]}; do bedtools intersect -a ./peakLance/${i}_${index}_L-tron.bed -b ${blacklist} -v | awk '$NF>2.5 && $4>0.001 {print $0}' > ./peakFiltered/${i}_peak.bed; done 
+
+
